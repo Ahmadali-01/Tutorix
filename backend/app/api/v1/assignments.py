@@ -14,6 +14,7 @@ from app.schemas.assignment import (
     EvaluationRead,
     SubmissionCreate,
 )
+from app.services.analytics_service import log_event
 
 router = APIRouter()
 
@@ -34,6 +35,7 @@ def create_assignment(
     db.add(assignment)
     db.commit()
     db.refresh(assignment)
+    log_event(db, current_user.id, str(payload.course_id), "assignment_created", {"title": payload.title})
     return assignment
 
 
@@ -60,6 +62,7 @@ def submit_assignment(
     db.add(submission)
     db.commit()
     db.refresh(submission)
+    log_event(db, current_user.id, str(assignment.course_id), "assignment_submitted", {"assignment_id": str(assignment.id)})
     return {"submission_id": str(submission.id)}
 
 
@@ -67,7 +70,7 @@ def submit_assignment(
 def evaluate_submission_endpoint(
     submission_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ):
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     if not submission:
@@ -97,4 +100,5 @@ def evaluate_submission_endpoint(
     db.add(evaluation)
     db.commit()
     db.refresh(evaluation)
+    log_event(db, current_user.id, str(assignment.course_id), "assignment_evaluated", {"score": float(evaluation.score) if evaluation.score else None})
     return evaluation

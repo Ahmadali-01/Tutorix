@@ -9,6 +9,7 @@ from app.models.course import Course
 from app.models.user import User
 from app.rag.retriever import hybrid_search
 from app.schemas.assignment import QuestionGenerateRequest
+from app.services.analytics_service import log_event
 
 router = APIRouter()
 
@@ -37,7 +38,6 @@ def generate_questions_endpoint(
         question_type=payload.question_type,
         context=context,
     )
-
     if not generated:
         raise HTTPException(status_code=502, detail="LLM returned no valid questions")
 
@@ -59,6 +59,14 @@ def generate_questions_endpoint(
     db.commit()
     for row in saved:
         db.refresh(row)
+
+    log_event(
+        db,
+        current_user.id,
+        str(payload.course_id),
+        "questions_generated",
+        {"topic": payload.topic, "count": len(saved)},
+    )
 
     return {
         "status": "generated",

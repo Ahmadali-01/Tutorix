@@ -13,6 +13,7 @@ from app.models.user import User
 from app.rag.generator import generate_answer
 from app.rag.ingest import ingest_document
 from app.rag.retriever import hybrid_search
+from app.services.analytics_service import log_event
 
 router = APIRouter()
 
@@ -24,9 +25,14 @@ class RagQuery(BaseModel):
 
 
 @router.post("/query")
-def rag_query(payload: RagQuery, _: User = Depends(get_current_user)):
+def rag_query(
+    payload: RagQuery,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     contexts = hybrid_search(payload.query, course_id=payload.course_id, top_k=payload.top_k)
     answer = generate_answer(payload.query, contexts)
+    log_event(db, current_user.id, payload.course_id, "rag_query", {"query": payload.query})
     return {
         "query": payload.query,
         "answer": answer,
@@ -47,7 +53,7 @@ async def upload_material(
     course_id: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ):
     course = db.query(Course).filter(Course.id == course_id).first()
     if not course:
@@ -67,4 +73,5 @@ async def upload_material(
     finally:
         os.unlink(tmp_path)
 
+    log_event(db, current_user.id, course_id, "material_uploaded", {"filename": file.filename})
     return {"filename": file.filename, **result}
