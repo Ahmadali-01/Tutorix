@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -5,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.agents.predictor import predict_student
 from app.api.deps import get_current_user, require_role
 from app.db.session import get_db
 from app.models.analytics import AnalyticsEvent, MasteryScore, Prediction
@@ -28,25 +30,20 @@ def student_analytics(
         .limit(50)
         .all()
     )
-
     event_counts = (
         db.query(AnalyticsEvent.event_type, func.count(AnalyticsEvent.id))
         .filter(AnalyticsEvent.user_id == student_id)
         .group_by(AnalyticsEvent.event_type)
         .all()
     )
-
     submissions = db.query(Submission).filter(Submission.student_id == student_id).all()
     submission_ids = [s.id for s in submissions]
     evaluations = []
     if submission_ids:
         evaluations = db.query(Evaluation).filter(Evaluation.submission_id.in_(submission_ids)).all()
-
     scores = [float(e.score) for e in evaluations if e.score is not None]
     avg_score = round(sum(scores) / len(scores), 2) if scores else None
-
     mastery = db.query(MasteryScore).filter(MasteryScore.student_id == student_id).all()
-
     return {
         "student_id": student_id,
         "total_events": sum(c for _, c in event_counts),
@@ -125,6 +122,66 @@ def student_prediction(
             }
             for p in preds
         ],
+    }
+
+
+@router.post("/predict/student/{student_id}")
+def run_prediction(
+    student_id: str,
+    course_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("teacher", "admin", "analyst")),
+):
+    events = db.query(AnalyticsEvent).filter(AnalyticsEvent.user_id == student_id).all()
+    total_events = len(events)
+
+    last_event = (
+        db.query(AnalyticsEvent)
+        .filter(AnalyticsEvent.user_id == student_id)
+        .order_by(AnalyticsEvent.created_at.desc())
+        .first()
+    )
+    days_inactive = 0
+    if last_event and last_event.created_at:
+        delta = datetime.now(timezone.utc) - last_event.created_at.replace(tzinfo=timezone.utc)
+        days_inactive = max(delta.days, 0)
+
+    submissions = db.query(Submission).filter(Submission.student_id == student_id).all()
+    submission_ids = [s.id for s in submissions]
+    evaluations = []
+    if submission_ids:
+        evaluations = db.query(Evaluation).filter(Evaluation.submission_id.in_(submission_ids)).all()
+    scores = [float(e.score) for e in evaluations if e.score is not None]
+    avg_score = round(sum(scores) / len(scores), 2) if scores else None
+
+    result = predict_student(
+        total_events=total_events,
+        submissions=len(submissions),
+        avg_score=avg_score,
+        days_inactive=days_inactive,
+    )
+
+    prediction = Prediction(
+        student_id=student_id,
+        course_id=course_id,
+        prediction_type="risk",
+        value=result["predicted_score"],
+        risk_level=result["risk_level"],
+        explanation=result["explanation"],
+    )
+    db.add(prediction)
+    db.commit()
+    db.refresh(prediction)
+
+    log_event(db, current_user.id, course_id, "prediction_run", {"student_id": student_id})
+
+    return {
+        "prediction_id": str(prediction.id),
+        "student_id": student_id,
+        "risk_level": result["risk_level"],
+        "predicted_score": result["predicted_score"],
+        "explanation": result["explanation"],
+        "features": result["features"],
     }
 
 
