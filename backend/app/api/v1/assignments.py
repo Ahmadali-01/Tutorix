@@ -3,9 +3,10 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.agents.evaluator import evaluate_submission as llm_evaluate
 from app.api.deps import get_current_user, require_role
 from app.db.session import get_db
-from app.models.assignment import Assignment, Evaluation, Submission
+from app.models.assignment import Assignment, Evaluation, Rubric, Submission
 from app.models.user import User
 from app.schemas.assignment import (
     AssignmentCreate,
@@ -63,7 +64,7 @@ def submit_assignment(
 
 
 @router.post("/submissions/{submission_id}/evaluate", response_model=EvaluationRead)
-def evaluate_submission(
+def evaluate_submission_endpoint(
     submission_id: str,
     db: Session = Depends(get_db),
     _: User = Depends(require_role("teacher", "admin")),
@@ -72,12 +73,25 @@ def evaluate_submission(
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    # Placeholder — LLM rubric-based grading will be wired later.
+    assignment = db.query(Assignment).filter(Assignment.id == submission.assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    rubric_row = db.query(Rubric).filter(Rubric.assignment_id == assignment.id).first()
+    rubric = rubric_row.criteria if rubric_row else None
+
+    result = llm_evaluate(
+        title=assignment.title,
+        description=assignment.description or "",
+        submission=submission.content or "",
+        rubric=rubric,
+    )
+
     evaluation = Evaluation(
         submission_id=submission.id,
-        score=85,
-        feedback="Placeholder AI feedback. LLM evaluation coming soon.",
-        rubric_scores={"criteria_1": 85},
+        score=result.get("score"),
+        feedback=result.get("feedback"),
+        rubric_scores=result.get("rubric_scores"),
         evaluated_by="ai",
     )
     db.add(evaluation)
