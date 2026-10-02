@@ -88,7 +88,7 @@ export default function Sidebar({
 
       <button
         onClick={toggle}
-        className="absolute top-20 right-3 w-7 h-7 rounded-full bg-[#ff6d00] text-white flex items-center justify-center shadow-lg hover:bg-[#ff9e00] z-30 border-2 border-white/20"
+        className="absolute top-20 right-3 w-7 h-7 rounded-full bg-[#ff6d00] text-white flex items-center justify-center shadow-lg hover:bg-[#ff9e00] z-30 border-2 border-white/20 cursor-default"
         title={collapsed ? "Expand" : "Collapse"}
       >
         {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
